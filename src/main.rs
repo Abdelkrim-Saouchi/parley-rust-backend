@@ -2,6 +2,7 @@ mod app_state;
 mod db;
 mod error;
 mod handlers;
+mod models;
 mod routes;
 
 #[tokio::main]
