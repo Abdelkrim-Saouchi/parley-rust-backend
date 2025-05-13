@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO verification_tokens (id, user_id, token, token_type, expires_at)\n        VALUES ($1, $2, $3, $4, $5)\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text",
+        {
+          "Custom": {
+            "name": "token_type",
+            "kind": {
+              "Enum": [
+                "email_verification",
+                "password_reset",
+                "account_deletion",
+                "two_factor"
+              ]
+            }
+          }
+        },
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "beb5f7f6bbf6480990aad35c76c33d82d53ddd08ba9088c697dae4d6f619ab5f"
+}

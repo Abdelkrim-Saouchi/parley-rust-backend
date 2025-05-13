@@ -83,7 +83,6 @@ pub struct VerificationToken {
     id: Uuid,
     user_id: Uuid,
     token: String,
-    #[sqlx(rename = "type")]
     token_type: TokenType,
     expires_at: DateTime<Utc>,
     created_at: DateTime<Utc>,

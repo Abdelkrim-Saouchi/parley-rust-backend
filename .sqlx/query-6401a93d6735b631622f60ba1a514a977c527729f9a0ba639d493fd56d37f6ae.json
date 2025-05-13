@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO user_locations (user_id)\n        VALUES ($1)\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "6401a93d6735b631622f60ba1a514a977c527729f9a0ba639d493fd56d37f6ae"
+}
