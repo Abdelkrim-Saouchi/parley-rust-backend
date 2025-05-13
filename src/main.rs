@@ -3,6 +3,7 @@ mod db;
 mod error;
 mod handlers;
 mod models;
+mod queries;
 mod routes;
 
 #[tokio::main]
