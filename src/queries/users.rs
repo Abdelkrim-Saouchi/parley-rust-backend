@@ -122,7 +122,7 @@ pub async fn insert_user_verification_token(
     verification_token_id: &Uuid,
     verification_token: &str,
     token_type: TokenType,
-    verification_token_expiration: &chrono::DateTime<chrono::Utc>,
+    verification_token_expiration: chrono::DateTime<chrono::Utc>,
 ) -> AppResult<()> {
     let verification_token_insert_result = sqlx::query!(
         r#"
@@ -133,7 +133,7 @@ pub async fn insert_user_verification_token(
         user_id,
         verification_token,
         token_type as TokenType,
-        verification_token_expiration,
+        verification_token_expiration as chrono::DateTime<chrono::Utc>,
     )
     .execute(&mut **tx)
     .await;

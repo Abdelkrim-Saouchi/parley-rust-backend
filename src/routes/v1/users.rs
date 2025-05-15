@@ -6,4 +6,7 @@ pub fn users_routes() -> Router<AppState> {
     Router::new()
         .route("/all", get(get_all_users::get_all_users))
         .route("/signup", post(email_auth::signup)) // /api/v1/users/signup
+        .route("/login", post(email_auth::login)) // /api/v1/users/login
+        .route("/logout", post(email_auth::logout)) // /api/v1/users/signup
+        .route("/me", get(email_auth::get_authenticated_user_id)) // /api/v1/users/me
 }

@@ -33,14 +33,14 @@ pub enum TokenType {
 
 #[derive(Serialize, sqlx::FromRow)]
 pub struct User {
-    id: Uuid,
-    email: String,
-    password_hash: Option<String>,
-    email_verified: bool,
-    account_status: AccountStatus,
-    last_login: Option<DateTime<Utc>>,
-    created_at: DateTime<Utc>,
-    updated_at: DateTime<Utc>,
+    pub id: Uuid,
+    pub email: String,
+    pub password_hash: Option<String>,
+    pub email_verified: bool,
+    pub account_status: AccountStatus,
+    pub last_login_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Serialize, sqlx::FromRow)]
