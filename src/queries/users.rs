@@ -1,6 +1,6 @@
 use crate::error::{AppError, AppResult};
-use crate::handlers::v1::email_auth::Signup;
-use crate::models::users::{ProviderType, TokenType};
+use crate::handlers::v1::email_auth::{Login, Signup};
+use crate::models::users::{ProviderType, TokenType, User};
 use anyhow::anyhow;
 use uuid::Uuid;
 
@@ -146,4 +146,24 @@ pub async fn insert_user_verification_token(
     };
 
     Ok(())
+}
+
+pub async fn get_user_by_email(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    payload: &Login,
+) -> AppResult<User> {
+    let user: Option<crate::models::users::User> =
+        sqlx::query_as("SELECT * FROM users WHERE email = $1")
+            .bind(&payload.email)
+            .fetch_optional(&mut **tx)
+            .await
+            .map_err(|e| {
+                eprintln!("Database query error: {:?}", e);
+                AppError::InternalServerError(anyhow!("Database error during login"))
+            })?;
+
+    match user {
+        Some(user) => Ok(user),
+        None => return Err(AppError::BadRequest(anyhow!("Invalid email or password"))),
+    }
 }

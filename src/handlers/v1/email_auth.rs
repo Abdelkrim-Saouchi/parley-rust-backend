@@ -3,6 +3,7 @@ use crate::error::AppError;
 use crate::error::AppResult;
 use crate::models::sessions::UserSession;
 use crate::models::users::{ProviderType, TokenType};
+use crate::queries::users::get_user_by_email;
 use crate::queries::users::insert_user;
 use crate::queries::users::insert_user_location;
 use crate::queries::users::insert_user_profile;
@@ -178,20 +179,7 @@ pub async fn login(
     })?;
 
     // Use a raw query with bind parameters to avoid prepared statement issues
-    let user: Option<crate::models::users::User> =
-        sqlx::query_as("SELECT * FROM users WHERE email = $1")
-            .bind(&payload.email)
-            .fetch_optional(&mut *tx)
-            .await
-            .map_err(|e| {
-                eprintln!("Database query error: {:?}", e);
-                AppError::InternalServerError(anyhow!("Database error during login"))
-            })?;
-
-    let user = match user {
-        Some(user) => user,
-        None => return Err(AppError::BadRequest(anyhow!("Invalid email or password"))),
-    };
+    let user = get_user_by_email(&mut tx, &payload).await?;
 
     let password_hash = user
         .password_hash
@@ -213,14 +201,11 @@ pub async fn login(
             AppError::InternalServerError(anyhow!("failed to create session"))
         })?;
 
-    println!("get after session");
     // Commit the transaction
     tx.commit().await.map_err(|e| {
         eprintln!("Transaction commit error: {:?}", e);
         AppError::InternalServerError(anyhow!("Database error committing transaction"))
     })?;
-
-    println!("get after finishing transaction");
 
     Ok((
         StatusCode::ACCEPTED,
