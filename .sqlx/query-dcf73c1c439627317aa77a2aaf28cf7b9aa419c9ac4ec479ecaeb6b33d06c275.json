@@ -1,0 +1,33 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n    INSERT INTO user_providers (user_id, provider, provider_user_id, provider_email, access_token, refresh_token, token_expires_at, provider_data)\n    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)\n    ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        {
+          "Custom": {
+            "name": "provider_type",
+            "kind": {
+              "Enum": [
+                "email",
+                "google",
+                "facebook",
+                "github"
+              ]
+            }
+          }
+        },
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Timestamptz",
+        "Jsonb"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "dcf73c1c439627317aa77a2aaf28cf7b9aa419c9ac4ec479ecaeb6b33d06c275"
+}

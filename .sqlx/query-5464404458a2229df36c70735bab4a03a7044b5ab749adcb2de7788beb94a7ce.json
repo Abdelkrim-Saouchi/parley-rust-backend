@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO users (id, email, password_hash, email_verified, account_status) VALUES ($1, $2, NULL, $3, $4)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Bool",
+        {
+          "Custom": {
+            "name": "account_status_type",
+            "kind": {
+              "Enum": [
+                "active",
+                "suspended",
+                "deleted",
+                "unverified"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "5464404458a2229df36c70735bab4a03a7044b5ab749adcb2de7788beb94a7ce"
+}

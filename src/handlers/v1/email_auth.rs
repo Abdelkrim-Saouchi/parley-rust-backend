@@ -7,8 +7,8 @@ use crate::queries::users::get_user_by_email;
 use crate::queries::users::insert_user;
 use crate::queries::users::insert_user_location;
 use crate::queries::users::insert_user_profile;
+use crate::queries::users::insert_user_provider;
 use crate::queries::users::insert_user_verification_token;
-use crate::queries::users::inset_user_provider;
 use anyhow::anyhow;
 use axum::http::StatusCode;
 use axum::{extract::State, response::IntoResponse, Json};
@@ -106,7 +106,7 @@ pub async fn signup(
     let provider_email_value = &payload.email;
 
     // insert user provider to user_providers table
-    inset_user_provider(
+    insert_user_provider(
         &mut tx,
         &user_id,
         provider_type,
