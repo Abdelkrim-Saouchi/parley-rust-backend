@@ -50,6 +50,7 @@ async fn main() {
 
     let helmet = Helmet::new().add(ReferrerPolicy::NoReferrerWhenDowngrade);
 
+    // google oauth params
     let google_client_id =
         ClientId::new(env::var("GOOGLE_CLIENT_ID").expect("GOOGLE_CLIENT_ID must be set"));
     let google_client_secret = ClientSecret::new(
@@ -71,9 +72,30 @@ async fn main() {
     )
     .set_redirect_uri(googel_redirect_uri);
 
+    // github ouath params
+    let github_client_id =
+        ClientId::new(env::var("GITHUB_CLIENT_ID").expect("GITHUB_CLIENT_ID must be set"));
+    let github_client_secret =
+        ClientSecret::new(env::var("GITHUB_CLIENT_SECRET").expect("GITHUB_CLIENT_ID must be set"));
+    let github_auth_url = AuthUrl::new("https://github.com/login/oauth/authorize".to_string())
+        .expect("Invalid github auth url");
+    let github_token_url = TokenUrl::new("https://github.com/login/oauth/access_token".to_string())
+        .expect("Invalid Github token url");
+    let github_redirect_uri =
+        RedirectUrl::new(env::var("GITHUB_REDIRECT_URI").expect("GITHUB_REDIRECT_URI")).unwrap();
+
+    let github_oauth_client = BasicClient::new(
+        github_client_id,
+        Some(github_client_secret),
+        github_auth_url,
+        Some(github_token_url),
+    )
+    .set_redirect_uri(github_redirect_uri);
+
     let state = app_state::AppState {
         db_pool: pool,
         google_oauth_client,
+        github_oauth_client,
     };
     let app = routes::create_routes()
         .with_state(state)

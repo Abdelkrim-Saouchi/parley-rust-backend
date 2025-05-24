@@ -13,6 +13,7 @@ use axum::{
 };
 use chrono::{Duration, Utc};
 use oauth2::{basic::BasicClient, AuthorizationCode, CsrfToken, Scope, TokenResponse};
+use oauth2::{RequestTokenError, StandardErrorResponse};
 use reqwest;
 use serde::Deserialize;
 use tower_sessions::Session;
@@ -29,7 +30,7 @@ pub struct AuthCallbackQuery {
 fn get_oauth_client<'a>(state: &'a AppState, provider_name: &str) -> AppResult<&'a BasicClient> {
     match provider_name.to_lowercase().as_str() {
         "google" => Ok(&state.google_oauth_client),
-        // "github" support not yet implemented
+        "github" => Ok(&state.github_oauth_client),
         _ => Err(AppError::BadRequest(anyhow!(
             "Unsupported OAuth provider: {}",
             provider_name
@@ -76,7 +77,6 @@ pub async fn oauth_login_handler(
             eprintln!("Session insert error: {:?}", e);
             AppError::InternalServerError(anyhow!("Failed to store oauth state in session"))
         })?;
-    println!("I am here!");
 
     Ok(Redirect::to(auth_url.as_str()))
 }
@@ -119,21 +119,76 @@ pub async fn oauth_callback_handler(
 
     let token_response = client
         .exchange_code(code)
+        .set_redirect_uri(std::borrow::Cow::Borrowed(client.redirect_url().unwrap()))
         .request_async(oauth2::reqwest::async_http_client)
         .await
         .map_err(|e| {
-            eprintln!("OAuth token exchange error: {:?}", e);
-            AppError::InternalServerError(anyhow!("Failed to exchange OAuth code"))
+            eprintln!("OAuth token exchange error for {}: {:?}", provider_name, e);
+
+            match e {
+                oauth2::RequestTokenError::Request(req_err) => {
+                    AppError::InternalServerError(anyhow!("OAuth token request failed: {:?}", req_err))
+                }
+                oauth2::RequestTokenError::Parse(parse_err, response_body) => {
+                    // Check if the response body contains a GitHub OAuth error response
+                    let response_str = String::from_utf8_lossy(&response_body);
+                    
+                    // Try to parse as JSON to extract OAuth error information
+                    if let Ok(error_json) = serde_json::from_slice::<serde_json::Value>(&response_body) {
+                        if let Some(error_type) = error_json.get("error").and_then(|v| v.as_str()) {
+                            let error_description = error_json
+                                .get("error_description")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("No description provided");
+                            
+                            // Handle specific OAuth errors that should be user-facing
+                            match error_type {
+                                "bad_verification_code" | "invalid_grant" => {
+                                    return AppError::BadRequest(anyhow!(
+                                        "Invalid or expired authorization code. Please try logging in again."
+                                    ));
+                                }
+                                _ => {
+                                    return AppError::InternalServerError(anyhow!(
+                                        "OAuth server returned an error for {}: {}: {}",
+                                        provider_name,
+                                        error_type,
+                                        error_description
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Fall back to original parse error handling if not a recognizable OAuth error
+                    AppError::InternalServerError(anyhow!(
+                        "Failed to parse OAuth provider response for {}: {:?} (Body: {})",
+                        provider_name,
+                        parse_err,
+                        response_str
+                    ))
+                }
+                oauth2::RequestTokenError::Other(other_err) => {
+                    AppError::InternalServerError(anyhow!(
+                        "An unexpected OAuth error occurred for {}: {:?}",
+                        provider_name,
+                        other_err
+                    ))
+                }
+                oauth2::RequestTokenError::ServerResponse(server_err) => {
+                    AppError::InternalServerError(anyhow!(
+                        "OAuth server returned an error for {}: {:?}",
+                        provider_name,
+                        server_err
+                    ))
+                }
+            }
         })?;
 
     let access_token = token_response.access_token().secret();
     let refresh_token = token_response
         .refresh_token()
         .map(|t| t.secret().to_string());
-    println!(
-        "refresh token: {}",
-        refresh_token.as_deref().unwrap_or("no refresh token")
-    );
     let token_expires_at = token_response
         .expires_in()
         .map(|d| Utc::now() + Duration::seconds(d.as_secs() as i64));
@@ -289,7 +344,7 @@ pub async fn oauth_callback_handler(
                     create_new_user_with_provider(
                         &mut tx,
                         &new_user_id,
-                        provider_email.as_deref().unwrap(),
+                        provider_email.as_deref().unwrap_or(""),
                         provider_type,
                         &provider_user_id,
                         provider_email.as_deref(),
@@ -340,7 +395,6 @@ pub async fn oauth_logout_handler(
     Path(provider_name): Path<String>,
 ) -> AppResult<impl IntoResponse> {
     let pool_db = &state.db_pool;
-    println!("run logout");
 
     let user_id = match session.get::<UserSession>("user").await.map_err(|e| {
         eprintln!("Session get error: {:?}", e);
@@ -359,8 +413,6 @@ pub async fn oauth_logout_handler(
         ));
     };
 
-    let provider_type = ProviderType::Google;
-
     match provider_name.to_lowercase().as_str() {
         "google" => {
             // Obtain a connection from the pool
@@ -368,6 +420,8 @@ pub async fn oauth_logout_handler(
                 eprintln!("Database connection error: {:?}", e);
                 AppError::InternalServerError(anyhow!("Failed to get database connection"))
             })?;
+
+            let provider_type = ProviderType::Google;
 
             // Use a simple query to avoid prepared statement issues
             let row = sqlx::query_scalar::<_, Option<String>>(
@@ -393,6 +447,58 @@ pub async fn oauth_logout_handler(
                     .map_err(|e| {
                         eprintln!("Google token revocation error: {:?}", e);
                         AppError::InternalServerError(anyhow!("Failed to revoke Google token"))
+                    })?;
+
+                // Update the database to clear the tokens
+                sqlx::query(
+                    "UPDATE user_providers
+                     SET access_token = NULL, refresh_token = NULL, token_expires_at = NULL
+                     WHERE user_id = $1 AND provider = $2::provider_type",
+                )
+                .bind(user_id)
+                .bind(provider_type as ProviderType)
+                .execute(&mut *conn) // Use the mutable reference to the connection
+                .await
+                .map_err(|e| {
+                    eprintln!("Database update error: {:?}", e);
+                    AppError::InternalServerError(anyhow!("Database error during logout"))
+                })?;
+            }
+        }
+        "github" => {
+            // Obtain a connection from the pool
+            let mut conn = pool_db.acquire().await.map_err(|e| {
+                eprintln!("Database connection error: {:?}", e);
+                AppError::InternalServerError(anyhow!("Failed to get database connection"))
+            })?;
+
+            let provider_type = ProviderType::Github;
+
+            // Use a simple query to avoid prepared statement issues
+            let row = sqlx::query_scalar::<_, Option<String>>(
+                "SELECT access_token FROM user_providers WHERE user_id = $1 AND provider = $2::provider_type AND access_token IS NOT NULL"
+            )
+            .bind(user_id)
+            .bind(provider_type as ProviderType)
+            .fetch_optional(&mut *conn)
+            .await
+            .map_err(|e| {
+                eprintln!("Database query error (fetch_optional): {:?}", e);
+                AppError::InternalServerError(anyhow!("Database error during logout (fetch): {}", e))
+            })?;
+
+            if let Some(access_token) = row {
+                let client = reqwest::Client::new();
+                client
+                    .post("https://api.github.com/authorizations/revoke")
+                    .form(&[("credentials", access_token)])
+                    .send()
+                    .await
+                    .map_err(|e| {
+                        eprintln!("GitHub revoke API error: {:?}", e);
+                        AppError::InternalServerError(anyhow!(
+                            "Failed to revoke GitHub authorization"
+                        ))
                     })?;
 
                 // Update the database to clear the tokens
