@@ -265,7 +265,45 @@ pub async fn oauth_callback_handler(
                 let id = provider_user_info["id"].as_f64().ok_or_else(|| {
                     AppError::InternalServerError(anyhow!("Github use ID not found"))
                 })?;
-                let email = provider_user_info["email"].as_str().map(|s| s.to_string());
+
+                // Try to get email from main user object
+                let mut email = provider_user_info["email"].as_str().map(|s| s.to_string());
+
+                // If email is not present, fetch from /user/emails endpoint
+                if email.is_none() {
+                    let emails_url = "https://api.github.com/user/emails";
+                    let emails_resp = reqwest::Client::new()
+                        .get(emails_url)
+                        .bearer_auth(access_token)
+                        .header("User-Agent", "parley_backend")
+                        .send()
+                        .await
+                        .map_err(|e| {
+                            eprintln!("GitHub /user/emails fetch error: {:?}", e);
+                            AppError::InternalServerError(anyhow!("Failed to fetch emails from GitHub"))
+                        })?
+                        .json::<serde_json::Value>()
+                        .await
+                        .map_err(|e| {
+                            eprintln!("GitHub /user/emails JSON error: {:?}", e);
+                            AppError::InternalServerError(anyhow!("Failed to parse emails from GitHub"))
+                        })?;
+
+                    if let Some(arr) = emails_resp.as_array() {
+                        // Find the primary and verified email
+                        if let Some(primary) = arr.iter().find(|e| {
+                            e.get("primary").and_then(|v| v.as_bool()).unwrap_or(false)
+                                && e.get("verified").and_then(|v| v.as_bool()).unwrap_or(false)
+                        }) {
+                            if let Some(email_str) = primary.get("email").and_then(|v| v.as_str()) {
+                                email = Some(email_str.to_string());
+                            }
+                        } else if let Some(any_email) = arr.iter().find_map(|e| e.get("email").and_then(|v| v.as_str())) {
+                            email = Some(any_email.to_string());
+                        }
+                    }
+                }
+
                 let display_name = provider_user_info["name"].as_str().map(|s| s.to_string());
                 let (first, last) = display_name.as_ref().map_or(("", ""), |name| {
                     let parts: Vec<&str> = name.split_whitespace().collect();
