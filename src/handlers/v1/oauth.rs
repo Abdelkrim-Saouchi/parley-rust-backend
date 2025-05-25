@@ -13,7 +13,6 @@ use axum::{
 };
 use chrono::{Duration, Utc};
 use oauth2::{basic::BasicClient, AuthorizationCode, CsrfToken, Scope, TokenResponse};
-use oauth2::{RequestTokenError, StandardErrorResponse};
 use reqwest;
 use serde::Deserialize;
 use tower_sessions::Session;
@@ -31,6 +30,7 @@ fn get_oauth_client<'a>(state: &'a AppState, provider_name: &str) -> AppResult<&
     match provider_name.to_lowercase().as_str() {
         "google" => Ok(&state.google_oauth_client),
         "github" => Ok(&state.github_oauth_client),
+        "facebook" => Ok(&state.facebook_oauth_client),
         _ => Err(AppError::BadRequest(anyhow!(
             "Unsupported OAuth provider: {}",
             provider_name
@@ -56,6 +56,10 @@ pub async fn oauth_login_handler(
         "github" => auth_req.add_scopes(vec![
             Scope::new("read:user".to_string()),
             Scope::new("user:email".to_string()),
+        ]),
+        "facebook" => auth_req.add_scopes(vec![
+            Scope::new("email".to_string()),
+            Scope::new("public_profile".to_string()),
         ]),
         _ => {
             return Err(AppError::BadRequest(anyhow!(
@@ -132,7 +136,7 @@ pub async fn oauth_callback_handler(
                 oauth2::RequestTokenError::Parse(parse_err, response_body) => {
                     // Check if the response body contains a GitHub OAuth error response
                     let response_str = String::from_utf8_lossy(&response_body);
-                    
+
                     // Try to parse as JSON to extract OAuth error information
                     if let Ok(error_json) = serde_json::from_slice::<serde_json::Value>(&response_body) {
                         if let Some(error_type) = error_json.get("error").and_then(|v| v.as_str()) {
@@ -140,7 +144,7 @@ pub async fn oauth_callback_handler(
                                 .get("error_description")
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("No description provided");
-                            
+
                             // Handle specific OAuth errors that should be user-facing
                             match error_type {
                                 "bad_verification_code" | "invalid_grant" => {
@@ -159,7 +163,7 @@ pub async fn oauth_callback_handler(
                             }
                         }
                     }
-                    
+
                     // Fall back to original parse error handling if not a recognizable OAuth error
                     AppError::InternalServerError(anyhow!(
                         "Failed to parse OAuth provider response for {}: {:?} (Body: {})",
@@ -196,6 +200,7 @@ pub async fn oauth_callback_handler(
     let user_info_url = match provider_name.to_lowercase().as_str() {
         "google" => "https://www.googleapis.com/oauth2/v2/userinfo",
         "github" => "https://api.github.com/user",
+        "facebook" => "https://graph.facebook.com/me?fields=id,name,email,first_name,last_name",
         _ => {
             return Err(AppError::InternalServerError(anyhow!(
                 "Unsupported provider for user info fetch"
@@ -260,6 +265,30 @@ pub async fn oauth_callback_handler(
                     Some(display_name.to_string()),
                 )
             }
+            "facebook" => {
+                let id = provider_user_info["id"].as_str().ok_or_else(|| {
+                    AppError::InternalServerError(anyhow!("facebook ID not found"))
+                })?;
+                let email = provider_user_info["email"].as_str().ok_or_else(|| {
+                    AppError::InternalServerError(anyhow!("Facebook email not found"))
+                })?;
+                let first_name = provider_user_info["first_name"].as_str().ok_or_else(|| {
+                    AppError::InternalServerError(anyhow!("Facebook first name not found"))
+                })?;
+                let last_name = provider_user_info["last_name"].as_str().ok_or_else(|| {
+                    AppError::InternalServerError(anyhow!("Facebook last name not found"))
+                })?;
+                let display_name = provider_user_info["name"].as_str().ok_or_else(|| {
+                    AppError::InternalServerError(anyhow!("Facebook display name not found"))
+                })?;
+                (
+                    id.to_string(),
+                    Some(email.to_string()),
+                    first_name.to_string(),
+                    last_name.to_string(),
+                    Some(display_name.to_string()),
+                )
+            }
 
             "github" => {
                 let id = provider_user_info["id"].as_f64().ok_or_else(|| {
@@ -280,13 +309,17 @@ pub async fn oauth_callback_handler(
                         .await
                         .map_err(|e| {
                             eprintln!("GitHub /user/emails fetch error: {:?}", e);
-                            AppError::InternalServerError(anyhow!("Failed to fetch emails from GitHub"))
+                            AppError::InternalServerError(anyhow!(
+                                "Failed to fetch emails from GitHub"
+                            ))
                         })?
                         .json::<serde_json::Value>()
                         .await
                         .map_err(|e| {
                             eprintln!("GitHub /user/emails JSON error: {:?}", e);
-                            AppError::InternalServerError(anyhow!("Failed to parse emails from GitHub"))
+                            AppError::InternalServerError(anyhow!(
+                                "Failed to parse emails from GitHub"
+                            ))
                         })?;
 
                     if let Some(arr) = emails_resp.as_array() {
@@ -298,7 +331,10 @@ pub async fn oauth_callback_handler(
                             if let Some(email_str) = primary.get("email").and_then(|v| v.as_str()) {
                                 email = Some(email_str.to_string());
                             }
-                        } else if let Some(any_email) = arr.iter().find_map(|e| e.get("email").and_then(|v| v.as_str())) {
+                        } else if let Some(any_email) = arr
+                            .iter()
+                            .find_map(|e| e.get("email").and_then(|v| v.as_str()))
+                        {
                             email = Some(any_email.to_string());
                         }
                     }
@@ -331,6 +367,7 @@ pub async fn oauth_callback_handler(
 
     let provider_type: ProviderType = match provider_name.to_lowercase().as_str() {
         "google" => ProviderType::Google,
+        "facebook" => ProviderType::Facebook,
         "github" => ProviderType::Github,
         _ => {
             return Err(AppError::InternalServerError(anyhow!(
@@ -555,12 +592,64 @@ pub async fn oauth_logout_handler(
                 })?;
             }
         }
+        "facebook" => {
+            // obtain access token
+            let mut conn = pool_db.acquire().await.map_err(|e| {
+                eprintln!("Database connection error: {:?}", e);
+                AppError::InternalServerError(anyhow!("Failed to get database connection"))
+            })?;
+
+            let provider_type = ProviderType::Facebook;
+
+            // Use a simple query to avoid prepared statement issues
+            let row = sqlx::query_scalar::<_, Option<String>>(
+                "SELECT access_token FROM user_providers WHERE user_id = $1 AND provider = $2::provider_type AND access_token IS NOT NULL"
+            )
+            .bind(user_id)
+            .bind(provider_type as ProviderType)
+            .fetch_optional(&mut *conn)
+            .await
+            .map_err(|e| {
+                eprintln!("Database query error (fetch_optional): {:?}", e);
+                AppError::InternalServerError(anyhow!("Database error during logout (fetch): {}", e))
+            })?;
+
+            if let Some(access_token) = row {
+                let client = reqwest::Client::new();
+                client
+                    .delete("https://graph.facebook.com/v22.0/me/permissions")
+                    .form(&[("access_token", access_token)])
+                    .send()
+                    .await
+                    .map_err(|e| {
+                        eprintln!("facebook access token revoke API error: {:?}", e);
+                        AppError::InternalServerError(anyhow!(
+                            "Failed to revoke GitHub authorization"
+                        ))
+                    })?;
+
+                // Update the database to clear the tokens
+                sqlx::query(
+                    "UPDATE user_providers
+                     SET access_token = NULL, refresh_token = NULL, token_expires_at = NULL
+                     WHERE user_id = $1 AND provider = $2::provider_type",
+                )
+                .bind(user_id)
+                .bind(provider_type as ProviderType)
+                .execute(&mut *conn) // Use the mutable reference to the connection
+                .await
+                .map_err(|e| {
+                    eprintln!("Database update error: {:?}", e);
+                    AppError::InternalServerError(anyhow!("Database error during logout"))
+                })?;
+            }
+        }
         _ => {
             return Err(AppError::InternalServerError(anyhow!(
                 "Unsupported provider for logout"
             )));
         }
-    };
+    }
 
     Ok((
         axum::http::StatusCode::OK,

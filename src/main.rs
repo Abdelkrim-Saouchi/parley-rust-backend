@@ -92,10 +92,34 @@ async fn main() {
     )
     .set_redirect_uri(github_redirect_uri);
 
+    // facebook oauth params
+    let facebook_client_id =
+        ClientId::new(env::var("FACEBOOK_CLIENT_ID").expect("FACEBOOK_CLIENT_ID must be set"));
+    let facebook_client_secret =
+        ClientSecret::new(env::var("FACEBOOK_CLIENT_SECRET").expect("FACEBOOK_CLIENT_SECRET"));
+    let facebook_auth_url = AuthUrl::new("https://www.facebook.com/v22.0/dialog/oauth".to_string())
+        .expect("Invalid facebook auth url");
+    let facebook_token_url =
+        TokenUrl::new("https://graph.facebook.com/v22.0/oauth/access_token".to_string())
+            .expect("Invalid facebook token url");
+    let facebook_redirect_uri = RedirectUrl::new(
+        env::var("FACEBOOK_REDIRECT_URI").expect("FACEBOOK_REDIRECT_URI must be set"),
+    )
+    .unwrap();
+
+    let facebook_oauth_client = BasicClient::new(
+        facebook_client_id,
+        Some(facebook_client_secret),
+        facebook_auth_url,
+        Some(facebook_token_url),
+    )
+    .set_redirect_uri(facebook_redirect_uri);
+
     let state = app_state::AppState {
         db_pool: pool,
         google_oauth_client,
         github_oauth_client,
+        facebook_oauth_client,
     };
     let app = routes::create_routes()
         .with_state(state)
