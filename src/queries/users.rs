@@ -2,9 +2,10 @@ use crate::error::{AppError, AppResult};
 use crate::handlers::v1::email_auth::{Login, Signup};
 use crate::models::users::{AccountStatus, ProviderType, TokenType, User};
 use anyhow::anyhow;
-use sqlx::PgConnection;
-use uuid::Uuid;
+use sqlx::pool::PoolConnection;
 use sqlx::types::time::OffsetDateTime;
+use sqlx::{PgConnection, Pool, Postgres};
+use uuid::Uuid;
 
 pub async fn insert_user(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
@@ -197,7 +198,7 @@ pub async fn find_user_id_by_provider(
 ) -> AppResult<Option<Uuid>> {
     // Use query_scalar instead of query! to avoid prepared statement issues
     let result = sqlx::query_scalar::<_, Uuid>(
-        "SELECT user_id FROM user_providers WHERE provider = $1 AND provider_user_id = $2"
+        "SELECT user_id FROM user_providers WHERE provider = $1 AND provider_user_id = $2",
     )
     .bind(provider_type as ProviderType)
     .bind(provider_user_id)
@@ -360,5 +361,48 @@ pub async fn create_new_user_with_provider(
         ))
     })?;
 
+    Ok(())
+}
+
+pub async fn get_access_token_by_user_id_and_provider(
+    user_id: Uuid,
+    provider_type: ProviderType,
+    conn: &mut PoolConnection<Postgres>,
+) -> AppResult<Option<Option<String>>> {
+    // Use a simple query to avoid prepared statement issues
+    let row = sqlx::query_scalar::<_, Option<String>>(
+        "SELECT access_token FROM user_providers WHERE user_id = $1 AND provider = $2::provider_type AND access_token IS NOT NULL"
+    )
+    .bind(user_id)
+    .bind(provider_type as ProviderType)
+    .fetch_optional(conn.as_mut())
+    .await
+    .map_err(|e| {
+        eprintln!("Database query error (fetch_optional): {:?}", e);
+        AppError::InternalServerError(anyhow!("Database error during logout (fetch): {}", e))
+    })?;
+
+    Ok(row)
+}
+
+pub async fn clear_tokens_in_db(
+    user_id: Uuid,
+    provider_type: ProviderType,
+    conn: &mut PoolConnection<Postgres>,
+) -> AppResult<()> {
+    // Update the database to clear the tokens
+    sqlx::query(
+        "UPDATE user_providers
+     SET access_token = NULL, refresh_token = NULL, token_expires_at = NULL
+     WHERE user_id = $1 AND provider = $2::provider_type",
+    )
+    .bind(user_id)
+    .bind(provider_type as ProviderType)
+    .execute(conn.as_mut()) // Use the mutable reference to the connection
+    .await
+    .map_err(|e| {
+        eprintln!("Database update error: {:?}", e);
+        AppError::InternalServerError(anyhow!("Database error during logout"))
+    })?;
     Ok(())
 }

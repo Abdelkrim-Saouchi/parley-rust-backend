@@ -1,10 +1,10 @@
+use crate::app_state::AppState;
 use crate::error::{AppError, AppResult};
 use crate::models::sessions::UserSession;
 use crate::models::users::{ProviderType, User};
-
 use crate::queries::users::{
-    create_new_user_with_provider, find_user_by_email, find_user_id_by_provider,
-    link_provider_to_user,
+    clear_tokens_in_db, create_new_user_with_provider, find_user_by_email,
+    find_user_id_by_provider, get_access_token_by_user_id_and_provider, link_provider_to_user,
 };
 use anyhow::anyhow;
 use axum::{
@@ -17,8 +17,6 @@ use reqwest;
 use serde::Deserialize;
 use tower_sessions::Session;
 use uuid::Uuid;
-
-use crate::app_state::AppState;
 
 #[derive(Deserialize)]
 pub struct AuthCallbackQuery {
@@ -291,7 +289,7 @@ pub async fn oauth_callback_handler(
             }
 
             "github" => {
-                let id = provider_user_info["id"].as_f64().ok_or_else(|| {
+                let id = provider_user_info["id"].as_i64().ok_or_else(|| {
                     AppError::InternalServerError(anyhow!("Github use ID not found"))
                 })?;
 
@@ -497,19 +495,8 @@ pub async fn oauth_logout_handler(
             })?;
 
             let provider_type = ProviderType::Google;
-
-            // Use a simple query to avoid prepared statement issues
-            let row = sqlx::query_scalar::<_, Option<String>>(
-                "SELECT access_token FROM user_providers WHERE user_id = $1 AND provider = $2::provider_type AND access_token IS NOT NULL"
-            )
-            .bind(user_id)
-            .bind(provider_type as ProviderType)
-            .fetch_optional(&mut *conn)
-            .await
-            .map_err(|e| {
-                eprintln!("Database query error (fetch_optional): {:?}", e);
-                AppError::InternalServerError(anyhow!("Database error during logout (fetch): {}", e))
-            })?;
+            let row =
+                get_access_token_by_user_id_and_provider(user_id, provider_type, &mut conn).await?;
 
             if let Some(access_token) = row {
                 // Revoke the token with Google
@@ -523,21 +510,7 @@ pub async fn oauth_logout_handler(
                         eprintln!("Google token revocation error: {:?}", e);
                         AppError::InternalServerError(anyhow!("Failed to revoke Google token"))
                     })?;
-
-                // Update the database to clear the tokens
-                sqlx::query(
-                    "UPDATE user_providers
-                     SET access_token = NULL, refresh_token = NULL, token_expires_at = NULL
-                     WHERE user_id = $1 AND provider = $2::provider_type",
-                )
-                .bind(user_id)
-                .bind(provider_type as ProviderType)
-                .execute(&mut *conn) // Use the mutable reference to the connection
-                .await
-                .map_err(|e| {
-                    eprintln!("Database update error: {:?}", e);
-                    AppError::InternalServerError(anyhow!("Database error during logout"))
-                })?;
+                clear_tokens_in_db(user_id, provider_type, &mut conn).await?;
             }
         }
         "github" => {
@@ -548,19 +521,8 @@ pub async fn oauth_logout_handler(
             })?;
 
             let provider_type = ProviderType::Github;
-
-            // Use a simple query to avoid prepared statement issues
-            let row = sqlx::query_scalar::<_, Option<String>>(
-                "SELECT access_token FROM user_providers WHERE user_id = $1 AND provider = $2::provider_type AND access_token IS NOT NULL"
-            )
-            .bind(user_id)
-            .bind(provider_type as ProviderType)
-            .fetch_optional(&mut *conn)
-            .await
-            .map_err(|e| {
-                eprintln!("Database query error (fetch_optional): {:?}", e);
-                AppError::InternalServerError(anyhow!("Database error during logout (fetch): {}", e))
-            })?;
+            let row =
+                get_access_token_by_user_id_and_provider(user_id, provider_type, &mut conn).await?;
 
             if let Some(access_token) = row {
                 let client = reqwest::Client::new();
@@ -577,19 +539,7 @@ pub async fn oauth_logout_handler(
                     })?;
 
                 // Update the database to clear the tokens
-                sqlx::query(
-                    "UPDATE user_providers
-                     SET access_token = NULL, refresh_token = NULL, token_expires_at = NULL
-                     WHERE user_id = $1 AND provider = $2::provider_type",
-                )
-                .bind(user_id)
-                .bind(provider_type as ProviderType)
-                .execute(&mut *conn) // Use the mutable reference to the connection
-                .await
-                .map_err(|e| {
-                    eprintln!("Database update error: {:?}", e);
-                    AppError::InternalServerError(anyhow!("Database error during logout"))
-                })?;
+                clear_tokens_in_db(user_id, provider_type, &mut conn).await?;
             }
         }
         "facebook" => {
@@ -600,19 +550,8 @@ pub async fn oauth_logout_handler(
             })?;
 
             let provider_type = ProviderType::Facebook;
-
-            // Use a simple query to avoid prepared statement issues
-            let row = sqlx::query_scalar::<_, Option<String>>(
-                "SELECT access_token FROM user_providers WHERE user_id = $1 AND provider = $2::provider_type AND access_token IS NOT NULL"
-            )
-            .bind(user_id)
-            .bind(provider_type as ProviderType)
-            .fetch_optional(&mut *conn)
-            .await
-            .map_err(|e| {
-                eprintln!("Database query error (fetch_optional): {:?}", e);
-                AppError::InternalServerError(anyhow!("Database error during logout (fetch): {}", e))
-            })?;
+            let row =
+                get_access_token_by_user_id_and_provider(user_id, provider_type, &mut conn).await?;
 
             if let Some(access_token) = row {
                 let client = reqwest::Client::new();
@@ -629,19 +568,7 @@ pub async fn oauth_logout_handler(
                     })?;
 
                 // Update the database to clear the tokens
-                sqlx::query(
-                    "UPDATE user_providers
-                     SET access_token = NULL, refresh_token = NULL, token_expires_at = NULL
-                     WHERE user_id = $1 AND provider = $2::provider_type",
-                )
-                .bind(user_id)
-                .bind(provider_type as ProviderType)
-                .execute(&mut *conn) // Use the mutable reference to the connection
-                .await
-                .map_err(|e| {
-                    eprintln!("Database update error: {:?}", e);
-                    AppError::InternalServerError(anyhow!("Database error during logout"))
-                })?;
+                clear_tokens_in_db(user_id, provider_type, &mut conn).await?;
             }
         }
         _ => {
