@@ -1,6 +1,6 @@
 use crate::error::{AppError, AppResult};
 use crate::handlers::v1::email_auth::{Login, Signup};
-use crate::models::users::{AccountStatus, ProviderType, TokenType, User};
+use crate::models::users::{AccountStatus, ProviderType, TokenType, User, VerificationToken};
 use anyhow::anyhow;
 use sqlx::pool::PoolConnection;
 use sqlx::types::time::OffsetDateTime;
@@ -14,10 +14,12 @@ pub async fn insert_user(
     hashed_password: String,
 ) -> AppResult<()> {
     let insert_user_result = sqlx::query!(
-        "INSERT INTO users (id, email, password_hash) VALUES ($1, $2, $3)",
+        "INSERT INTO users (id, email, password_hash, email_verified, account_status) VALUES ($1, $2, $3, $4, $5)",
         user_id,
         payload.email,
-        hashed_password
+        hashed_password,
+        false,
+        AccountStatus::Unverified as AccountStatus
     )
     .execute(&mut **tx)
     .await;
@@ -148,6 +150,59 @@ pub async fn insert_user_verification_token(
         )));
     };
 
+    Ok(())
+}
+
+pub async fn find_verification_token(
+    conn: &mut PgConnection,
+    user_id: Uuid,
+    token: &str,
+) -> AppResult<Option<VerificationToken>> {
+    let verification_token = sqlx::query_as::<_, VerificationToken>(
+        r#"
+        SELECT *
+        FROM verification_tokens WHERE user_id = $1 AND token = $2 AND token_type = 'email_verification' AND used_at IS NULL
+        "#
+    )
+    .bind(user_id)
+    .bind(token)
+    .fetch_optional(conn)
+    .await
+    .map_err(|e| {
+        eprintln!("Database query error (find_verificaton_token): {:?}", e);
+        AppError::InternalServerError(anyhow!("database error fetching verification token"))
+    })?;
+
+    Ok(verification_token)
+}
+
+pub async fn activate_user(conn: &mut PgConnection, user_id: Uuid) -> AppResult<()> {
+    sqlx::query("UPDATE users SET email_verified = TRUE, account_status = 'active' WHERE id= $1")
+        .bind(user_id)
+        .execute(conn)
+        .await
+        .map_err(|e| {
+            eprintln!("Database update error (activate_user): {:?}", e);
+            AppError::InternalServerError(anyhow!("Database error activating user"))
+        })?;
+    Ok(())
+}
+
+pub async fn mark_verification_token_used(
+    conn: &mut PgConnection,
+    token_id: Uuid,
+) -> AppResult<()> {
+    sqlx::query("UPDATE verification_tokens SET used_at = NOW() WHERE id = $1")
+        .bind(token_id)
+        .execute(conn)
+        .await
+        .map_err(|e| {
+            eprintln!(
+                "Database update error (mark_verification_token_used): {:?}",
+                e
+            );
+            AppError::InternalServerError(anyhow!("Database error marking verification token used"))
+        })?;
     Ok(())
 }
 

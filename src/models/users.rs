@@ -80,11 +80,11 @@ pub struct UserProvider {
 
 #[derive(Serialize, sqlx::FromRow)]
 pub struct VerificationToken {
-    id: Uuid,
-    user_id: Uuid,
-    token: String,
-    token_type: TokenType,
-    expires_at: DateTime<Utc>,
-    created_at: DateTime<Utc>,
-    used_at: Option<DateTime<Utc>>,
+    pub id: Uuid,
+    pub user_id: Uuid,
+    pub token: String,
+    pub token_type: TokenType,
+    pub expires_at: DateTime<Utc>,
+    pub created_at: DateTime<Utc>,
+    pub used_at: Option<DateTime<Utc>>,
 }

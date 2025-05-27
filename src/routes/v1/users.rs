@@ -8,6 +8,10 @@ pub fn users_routes() -> Router<AppState> {
         .route("/signup", post(email_auth::signup)) // /api/v1/users/signup
         .route("/login", post(email_auth::login)) // /api/v1/users/login
         .route("/logout", post(email_auth::logout)) // /api/v1/users/logout
+        .route(
+            "/verify/{user_id}/{token}",
+            get(email_auth::verify_email_handler),
+        )
         .route("/me", get(email_auth::get_authenticated_user_id)) // /api/v1/users/me
         // Oauth routes
         .route("/auth/{provider}/login", get(oauth::oauth_login_handler))

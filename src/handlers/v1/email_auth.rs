@@ -2,20 +2,26 @@ use crate::app_state::AppState;
 use crate::error::AppError;
 use crate::error::AppResult;
 use crate::models::sessions::UserSession;
+use crate::models::users::AccountStatus;
 use crate::models::users::{ProviderType, TokenType};
+use crate::queries::users::activate_user;
+use crate::queries::users::find_verification_token;
 use crate::queries::users::get_user_by_email;
 use crate::queries::users::insert_user;
 use crate::queries::users::insert_user_location;
 use crate::queries::users::insert_user_profile;
 use crate::queries::users::insert_user_provider;
 use crate::queries::users::insert_user_verification_token;
+use crate::queries::users::mark_verification_token_used;
 use anyhow::anyhow;
+use axum::extract::Path;
 use axum::http::StatusCode;
 use axum::{extract::State, response::IntoResponse, Json};
 use bcrypt::{hash, verify, DEFAULT_COST};
 use chrono::Duration;
 use chrono::Utc;
 use serde::Deserialize;
+use sqlx::Acquire;
 use tower_sessions::Session;
 use uuid::Uuid;
 use validator::Validate;
@@ -143,7 +149,63 @@ pub async fn signup(
 
     Ok((
         StatusCode::CREATED,
-        Json(serde_json::json!({"id": user_id, "email": payload.email})),
+        Json(
+            serde_json::json!({"id": user_id, "email": payload.email, "message": "User created successfully. Please check your email to verfiy your account"}),
+        ),
+    ))
+}
+
+#[derive(Deserialize)]
+pub struct VerificationPath {
+    user_id: Uuid,
+    token: String,
+}
+
+pub async fn verify_email_handler(
+    State(state): State<AppState>,
+    Path(path): Path<VerificationPath>,
+) -> AppResult<impl IntoResponse> {
+    let mut conn = state.db_pool.acquire().await.map_err(|e| {
+        eprintln!("Database connection error: {:?}", e);
+        AppError::InternalServerError(anyhow!("Failed to get database connection"))
+    })?;
+
+    let mut tx = conn.begin().await.map_err(|e| {
+        eprintln!("Transaction begin error: {:?}", e);
+        AppError::InternalServerError(anyhow!("Failed to begin transaction for verification"))
+    })?;
+
+    let verification_token = find_verification_token(&mut tx, path.user_id, &path.token)
+        .await?
+        .ok_or_else(|| AppError::BadRequest(anyhow!("Invalid or used verification token")))?;
+
+    if verification_token.expires_at < Utc::now() {
+        // Consider cleaning up expired tokens here or with a background job
+        tx.rollback().await.map_err(|e| {
+            eprintln!("Transaction rollback error: {:?}", e);
+            AppError::InternalServerError(anyhow!(
+                "Failed to rollback transaction after expired token"
+            ))
+        })?;
+        return Err(AppError::BadRequest(anyhow!(
+            "Verification token has expired. Please request a new one."
+        )));
+    }
+
+    activate_user(&mut tx, path.user_id).await?;
+
+    mark_verification_token_used(&mut tx, verification_token.id).await?;
+
+    tx.commit().await.map_err(|e| {
+        eprintln!("Transaction commit error: {:?}", e);
+        AppError::InternalServerError(anyhow!("Failed to commit transaction for verification"))
+    })?;
+
+    Ok((
+        StatusCode::OK,
+        Json(
+            serde_json::json!({"message": "Email verified successfully. Your account is now active."}),
+        ),
     ))
 }
 
@@ -180,6 +242,20 @@ pub async fn login(
 
     // Use a raw query with bind parameters to avoid prepared statement issues
     let user = get_user_by_email(&mut tx, &payload).await?;
+
+    // Check if email is verified
+    if !user.email_verified {
+        return Err(AppError::Unauthorized(anyhow!(
+            "Email not verified. Please check your inbox or request a new verification link."
+        )));
+    }
+
+    // Check account status
+    if user.account_status != AccountStatus::Active {
+        return Err(AppError::Unauthorized(anyhow!(
+            "Your account is not active. please contact support if you believe this is an error."
+        )));
+    };
 
     let password_hash = user
         .password_hash
