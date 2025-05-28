@@ -5,6 +5,7 @@ use crate::models::sessions::UserSession;
 use crate::models::users::AccountStatus;
 use crate::models::users::{ProviderType, TokenType};
 use crate::queries::users::activate_user;
+use crate::queries::users::find_password_reset_token;
 use crate::queries::users::find_user_by_email;
 use crate::queries::users::find_verification_token;
 use crate::queries::users::get_user_by_email;
@@ -13,7 +14,10 @@ use crate::queries::users::insert_user_location;
 use crate::queries::users::insert_user_profile;
 use crate::queries::users::insert_user_provider;
 use crate::queries::users::insert_user_verification_token;
+use crate::queries::users::invalidate_password_reset_tokens;
 use crate::queries::users::mark_verification_token_used;
+use crate::queries::users::update_user_password;
+use crate::utils::email::send_password_reset_email;
 use crate::utils::email::send_verification_email;
 use anyhow::anyhow;
 use axum::extract::Path;
@@ -353,6 +357,205 @@ pub async fn resend_verification_email_hander(
         Json(
             serde_json::json!({"message": "Verification email resent successfully. Please check your inbox."}),
         ),
+    ))
+}
+
+#[derive(Deserialize, Validate)]
+pub struct ForgotpasswordRequest {
+    #[validate(email(message = "Invalid email format"))]
+    #[validate(length(min = 1, max = 255, message = "Email is required and cannot be empty"))]
+    pub email: String,
+}
+
+#[derive(Deserialize, Validate)]
+pub struct ResetPasswordPayload {
+    #[validate(length(min = 8, message = "Password must be at least 8 characters"))]
+    #[serde(rename = "newPassword")]
+    pub new_password: String,
+    #[validate(length(min = 8, message = "Password must match"))]
+    #[serde(rename = "passwordConfirmation")]
+    pub password_confirmation: String,
+}
+
+pub async fn forgot_password_handler(
+    State(state): State<AppState>,
+    Json(mut payload): Json<ForgotpasswordRequest>,
+) -> AppResult<impl IntoResponse> {
+    let db_pool = state.db_pool;
+    payload.email = payload.email.trim().to_string();
+    payload.validate().map_err(|e| {
+        let mut error_messages = String::new();
+        for (field, errors) in e.field_errors() {
+            for error in errors {
+                error_messages.push_str(&format!(
+                    "{}: {} ",
+                    field,
+                    error
+                        .message
+                        .as_ref()
+                        .map_or("Invalid value", |m| m.as_ref())
+                ));
+            }
+        }
+        AppError::BadRequest(anyhow!(error_messages.trim().to_string()))
+    })?;
+
+    let mut conn = db_pool.acquire().await.map_err(|e| {
+        eprintln!("Database connection error: {:?}", e);
+        AppError::InternalServerError(anyhow!("Failed to get database connection"))
+    })?;
+
+    let user_result = find_user_by_email(&mut conn, &payload.email).await;
+
+    if let Ok(user) = user_result {
+        let mut tx = db_pool.begin().await.map_err(|e| {
+            eprintln!("Transaction begin error: {:?}", e);
+            AppError::InternalServerError(anyhow!(
+                "Failed to begin transaction for password reset request"
+            ))
+        })?;
+
+        // Invalidate any existing password reset tokens for this user
+        invalidate_password_reset_tokens(&mut tx, user.id).await?;
+
+        // Generate a new token and expiration
+        let reset_token_id = Uuid::new_v4();
+        let reset_token = Uuid::new_v4().to_string(); // Or a cryptographically secure random string
+        let reset_token_expiration = Utc::now() + Duration::hours(1); // Token valid for 1 hour
+        let token_type = TokenType::PasswordReset;
+
+        // Insert the new token into the database
+        insert_user_verification_token(
+            &mut tx,
+            &user.id,
+            &reset_token_id,
+            &reset_token,
+            token_type,
+            reset_token_expiration,
+        )
+        .await?;
+
+        tx.commit().await.map_err(|e| {
+            eprintln!("Transaction commit error: {:?}", e);
+            AppError::InternalServerError(anyhow!(
+                "Failed to commit transaction for password reset request"
+            ))
+        })?;
+
+        // Build the password reset link (Frontend URL + route)
+        // Ensure your frontend has a route like /reset-password/:user_id/:token
+        let reset_link = format!(
+            "{}/reset-password/{}/{}",
+            std::env::var("FRONTEND_URL")
+                .unwrap_or_else(|_| "http://localhost:3000/api/v1/users".to_string()),
+            user.id,
+            reset_token
+        );
+
+        // Send the password reset email
+        if let Err(e) = send_password_reset_email(&user.email, &reset_link).await {
+            eprintln!("Error sending password reset email: {:?}", e);
+            // Log the error but don't return it to the user for security
+        }
+    }
+    Ok((
+        StatusCode::OK,
+        Json(
+            serde_json::json!({"message": "If an account with that email exists, a password reset link has been sent."}),
+        ),
+    ))
+}
+
+pub async fn reset_password_handler(
+    State(state): State<AppState>,
+    Path(path): Path<VerificationPath>,
+    Json(payload): Json<ResetPasswordPayload>,
+) -> AppResult<impl IntoResponse> {
+    let db_pool = state.db_pool;
+
+    payload.validate().map_err(|e| {
+        let mut error_messages = String::new();
+        for (field, errors) in e.field_errors() {
+            for error in errors {
+                error_messages.push_str(&format!(
+                    "{}: {} ",
+                    field,
+                    error
+                        .message
+                        .as_ref()
+                        .map_or("Invalid value", |m| m.as_ref())
+                ));
+            }
+        }
+        AppError::BadRequest(anyhow!(error_messages.trim().to_string()))
+    })?;
+
+    if payload.new_password != payload.password_confirmation {
+        return Err(AppError::BadRequest(anyhow!("Password do not match")));
+    };
+
+    let mut conn = db_pool.acquire().await.map_err(|e| {
+        eprintln!("Database connection error: {:?}", e);
+        AppError::InternalServerError(anyhow!("Failed to get database connection"))
+    })?;
+
+    let mut tx = conn.begin().await.map_err(|e| {
+        eprintln!("Transaction begin error: {:?}", e);
+        AppError::InternalServerError(anyhow!("Failed to begin transaction for password reset"))
+    })?;
+
+    // Find and validate the password reset token
+    let reset_token = find_password_reset_token(&mut tx, path.user_id, &path.token).await?;
+
+    let Some(reset_token) = reset_token else {
+        tx.rollback().await.map_err(|e| {
+            eprintln!("Transaction rollback error: {:?}", e);
+            AppError::InternalServerError(anyhow!("Failed to rollback transaction"))
+        })?;
+        return Err(AppError::BadRequest(anyhow!(
+            "Invalid or expired password reset token"
+        )));
+    };
+
+    if reset_token.expires_at < Utc::now() {
+        tx.rollback().await.map_err(|e| {
+            eprintln!("Transaction rollback error: {:?}", e);
+            AppError::InternalServerError(anyhow!("Failed to rollback transaction"))
+        })?;
+        return Err(AppError::BadRequest(anyhow!(
+            "Password reset token has expired. Please request a new one."
+        )));
+    }
+
+    if reset_token.used_at.is_some() {
+        tx.rollback().await.map_err(|e| {
+            eprintln!("Transaction rollback error: {:?}", e);
+            AppError::InternalServerError(anyhow!("Failed to rollback transaction"))
+        })?;
+        return Err(AppError::BadRequest(anyhow!(
+            "Password reset token has already been used. Please request a new one."
+        )));
+    }
+    // Hash the new password
+    let hashed_password = hash(payload.new_password.as_bytes(), DEFAULT_COST).map_err(|e| {
+        eprintln!("Bcrypt hashing error: {:?}", e);
+        AppError::InternalServerError(anyhow!("Error processing new password"))
+    })?;
+
+    // Update the user's password in the database
+    update_user_password(&mut tx, path.user_id, hashed_password).await?;
+
+    // Mark the token as used
+    mark_verification_token_used(&mut tx, reset_token.id).await?;
+
+    tx.commit().await.map_err(|e| {
+        eprintln!("Transaction commit error: {:?}", e);
+        AppError::InternalServerError(anyhow!("Failed to commit transaction for password reset"))
+    })?;
+
+    Ok((
+        StatusCode::OK,
+        Json(serde_json::json!({"message": "Password has been reset successfully."})),
     ))
 }
 

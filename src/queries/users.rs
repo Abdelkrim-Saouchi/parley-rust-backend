@@ -226,14 +226,11 @@ pub async fn get_user_by_email(
     }
 }
 
-pub async fn find_user_by_email(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    email: &str,
-) -> AppResult<User> {
+pub async fn find_user_by_email(conn: &mut PgConnection, email: &str) -> AppResult<User> {
     let user: Option<crate::models::users::User> =
         sqlx::query_as("SELECT * FROM users WHERE email = $1")
             .bind(&email)
-            .fetch_optional(&mut **tx)
+            .fetch_optional(conn)
             .await
             .map_err(|e| {
                 eprintln!("Database query error: {:?}", e);
@@ -459,5 +456,65 @@ pub async fn clear_tokens_in_db(
         eprintln!("Database update error: {:?}", e);
         AppError::InternalServerError(anyhow!("Database error during logout"))
     })?;
+    Ok(())
+}
+
+pub async fn find_password_reset_token(
+    tx: &mut sqlx::Transaction<'_, Postgres>,
+    user_id: Uuid,
+    token: &str,
+) -> AppResult<Option<VerificationToken>> {
+    let verification_token = sqlx::query_as::<_, VerificationToken>(
+        r#"
+        SELECT *
+        FROM verification_tokens
+        WHERE user_id = $1 AND token = $2 AND token_type = $3 AND used_at IS NULL
+        "#,
+    )
+    .bind(user_id)
+    .bind(token)
+    .bind(TokenType::PasswordReset as TokenType) // Bind the specific token type
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(|e| {
+        eprintln!("Database query error (find_password_reset_token): {:?}", e);
+        AppError::InternalServerError(anyhow!("database error fetching password reset token"))
+    })?;
+
+    Ok(verification_token)
+}
+
+// Invalidate all existing password reset tokens for a user
+pub async fn invalidate_password_reset_tokens(
+    tx: &mut sqlx::Transaction<'_, Postgres>,
+    user_id: Uuid,
+) -> AppResult<()> {
+    sqlx::query("UPDATE verification_tokens SET used_at = NOW() WHERE user_id = $1 AND token_type = $2 AND used_at IS NULL")
+        .bind(user_id)
+        .bind(TokenType::PasswordReset as TokenType) // Invalidate only password reset tokens
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| {
+        eprintln!("Database update error (invalidate_password_reset_tokens): {:?}", e);
+        AppError::InternalServerError(anyhow!("Database error invalidating old password reset tokens"))
+    })?;
+    Ok(())
+}
+
+// Update a user's password hash
+pub async fn update_user_password(
+    tx: &mut sqlx::Transaction<'_, Postgres>,
+    user_id: Uuid,
+    hashed_password: String,
+) -> AppResult<()> {
+    sqlx::query("UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2")
+        .bind(hashed_password)
+        .bind(user_id)
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| {
+            eprintln!("Database update error (update_user_password): {:?}", e);
+            AppError::InternalServerError(anyhow!("Database error updating password"))
+        })?;
     Ok(())
 }
