@@ -4,7 +4,7 @@ use crate::models::users::{AccountStatus, ProviderType, TokenType, User, Verific
 use anyhow::anyhow;
 use sqlx::pool::PoolConnection;
 use sqlx::types::time::OffsetDateTime;
-use sqlx::{PgConnection, Pool, Postgres};
+use sqlx::{PgConnection, Postgres};
 use uuid::Uuid;
 
 pub async fn insert_user(

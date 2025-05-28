@@ -13,6 +13,7 @@ use crate::queries::users::insert_user_profile;
 use crate::queries::users::insert_user_provider;
 use crate::queries::users::insert_user_verification_token;
 use crate::queries::users::mark_verification_token_used;
+use crate::utils::email::send_verification_email;
 use anyhow::anyhow;
 use axum::extract::Path;
 use axum::http::StatusCode;
@@ -146,6 +147,23 @@ pub async fn signup(
     tx.commit().await.map_err(|_| {
         AppError::InternalServerError(anyhow!("Database error during signup commit"))
     })?;
+
+    // Build the verification link
+    let verification_link = format!(
+        "{}/api/v1/users/verify/{}/{}",
+        std::env::var("FRONTEND_URL").unwrap_or_else(|_| "http://localhost:3000".to_string()),
+        user_id,
+        verification_token
+    );
+
+    println!("email to: {:?}", payload.email);
+    // Send the verification email
+    send_verification_email(&payload.email, &verification_link)
+        .await
+        .map_err(|e| {
+            eprintln!("Email sending error: {:?}", e);
+            AppError::InternalServerError(anyhow!("Failed to send verification email"))
+        })?;
 
     Ok((
         StatusCode::CREATED,
