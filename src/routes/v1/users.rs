@@ -12,6 +12,10 @@ pub fn users_routes() -> Router<AppState> {
             "/verify/{user_id}/{token}",
             get(email_auth::verify_email_handler),
         )
+        .route(
+            "/resend-verification",
+            post(email_auth::resend_verification_email_hander),
+        )
         .route("/me", get(email_auth::get_authenticated_user_id)) // /api/v1/users/me
         // Oauth routes
         .route("/auth/{provider}/login", get(oauth::oauth_login_handler))

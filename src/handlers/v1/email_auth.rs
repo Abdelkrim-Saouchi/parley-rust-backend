@@ -5,6 +5,7 @@ use crate::models::sessions::UserSession;
 use crate::models::users::AccountStatus;
 use crate::models::users::{ProviderType, TokenType};
 use crate::queries::users::activate_user;
+use crate::queries::users::find_user_by_email;
 use crate::queries::users::find_verification_token;
 use crate::queries::users::get_user_by_email;
 use crate::queries::users::insert_user;
@@ -156,7 +157,6 @@ pub async fn signup(
         verification_token
     );
 
-    println!("email to: {:?}", payload.email);
     // Send the verification email
     send_verification_email(&payload.email, &verification_link)
         .await
@@ -223,6 +223,135 @@ pub async fn verify_email_handler(
         StatusCode::OK,
         Json(
             serde_json::json!({"message": "Email verified successfully. Your account is now active."}),
+        ),
+    ))
+}
+
+#[derive(Deserialize, Validate)]
+pub struct ResendVerificationEmailRequest {
+    #[validate(email(message = "Invalid email format"))]
+    #[validate(length(min = 1, max = 255, message = "Email is required and cannot be empty"))]
+    pub email: String,
+}
+
+pub async fn resend_verification_email_hander(
+    State(state): State<AppState>,
+    Json(mut payload): Json<ResendVerificationEmailRequest>,
+) -> AppResult<impl IntoResponse> {
+    let db_pool = state.db_pool;
+
+    payload.email = payload.email.trim().to_string();
+
+    payload.validate().map_err(|e| {
+        let mut error_messages = String::new();
+        for (field, errors) in e.field_errors() {
+            for error in errors {
+                error_messages.push_str(&format!(
+                    "{}: {}",
+                    field,
+                    error
+                        .message
+                        .as_ref()
+                        .map_or("invalid value", |m| m.as_ref())
+                ));
+            }
+        }
+        AppError::BadRequest(anyhow!(error_messages.trim().to_string()))
+    })?;
+
+    let mut conn = db_pool.acquire().await.map_err(|e| {
+        eprintln!("Database connection error: {:?}", e);
+        AppError::InternalServerError(anyhow!("Failed to get database connection"))
+    })?;
+
+    let mut tx = conn.begin().await.map_err(|e| {
+        eprintln!("Transaction begin error: {:?}", e);
+        AppError::InternalServerError(anyhow!(
+            "Failed to begin transaction for resend verification"
+        ))
+    })?;
+
+    // Find user by email
+    let user = match find_user_by_email(&mut tx, &payload.email).await {
+        Ok(user) => user,
+        Err(AppError::BadRequest(_)) => {
+            tx.commit().await.map_err(|e| {
+                eprintln!("Transaction commit error after user not found: {:?}", e);
+                AppError::InternalServerError(anyhow!("Database error during commit"))
+            })?;
+            return Err(AppError::BadRequest(anyhow!(
+                "User not found with this email address"
+            )));
+        }
+        Err(e) => {
+            tx.rollback().await.map_err(|rb_e| {
+                eprintln!("Transaction rollback error after db error: {:?}", rb_e);
+                AppError::InternalServerError(anyhow!("Database error during rollback"))
+            })?;
+            return Err(e);
+        }
+    };
+
+    if user.email_verified {
+        tx.commit().await.map_err(|e| {
+            eprintln!("Transaction commit error after already verified: {:?}", e);
+            AppError::InternalServerError(anyhow!("Database error during commit"))
+        })?;
+        return Err(AppError::BadRequest(anyhow!("Email is already verified")));
+    }
+
+    sqlx::query("UPDATE verification_tokens SET used_at = NOW() WHERE user_id = $1 AND token_type = 'email_verification' AND used_at IS NULL")
+        .bind(user.id)
+        .execute(&mut *tx).await.map_err(|e| {
+        eprintln!("Database update error (invalidate_tokens): {:?}", e);
+        AppError::InternalServerError(anyhow!("Database error invalidating old tokens"))
+    })?;
+
+    // Generate a new verification token and expiration
+    let verification_token_id = Uuid::new_v4();
+    let verification_token = Uuid::new_v4().to_string();
+    let verification_token_expiration = Utc::now() + Duration::hours(1);
+    let token_type = TokenType::EmailVerification;
+
+    insert_user_verification_token(
+        &mut tx,
+        &user.id,
+        &verification_token_id,
+        &verification_token,
+        token_type,
+        verification_token_expiration,
+    )
+    .await?;
+
+    tx.commit().await.map_err(|e| {
+        eprintln!("Transaction commit error: {:?}", e);
+        AppError::InternalServerError(anyhow!(
+            "Failed to commit transaction for resend verification"
+        ))
+    })?;
+
+    // Build the new verification link
+
+    let verification_link = format!(
+        "{}/api/v1/users/verify/{}/{}",
+        std::env::var("FRONTEND_URL").unwrap_or_else(|_| "http://localhost:3000".to_string()),
+        user.id,
+        verification_token
+    );
+
+    println!("email to: {:?}", user.email);
+    // Send the verification email
+    send_verification_email(&user.email, &verification_link)
+        .await
+        .map_err(|e| {
+            eprintln!("Email sending error: {:?}", e);
+            AppError::InternalServerError(anyhow!("Failed to send verification email"))
+        })?;
+
+    Ok((
+        StatusCode::OK,
+        Json(
+            serde_json::json!({"message": "Verification email resent successfully. Please check your inbox."}),
         ),
     ))
 }
