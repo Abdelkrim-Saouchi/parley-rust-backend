@@ -1,5 +1,5 @@
 use crate::app_state::AppState;
-use crate::handlers::v1::{email_auth, get_all_users, oauth};
+use crate::handlers::v1::{email_auth, get_all_users, oauth, profile};
 use axum::{routing::get, routing::post, Router};
 
 pub fn users_routes() -> Router<AppState> {
@@ -24,7 +24,6 @@ pub fn users_routes() -> Router<AppState> {
             "/reset-password/{user_id}/{token}",
             post(email_auth::reset_password_handler),
         )
-        .route("/me", get(email_auth::get_authenticated_user_id)) // /api/v1/users/me
         // Oauth routes
         .route("/auth/{provider}/login", get(oauth::oauth_login_handler))
         .route(
@@ -32,4 +31,7 @@ pub fn users_routes() -> Router<AppState> {
             get(oauth::oauth_callback_handler),
         )
         .route("/auth/{provider}/logout", get(oauth::oauth_logout_handler))
+        // users routes protected by auth
+        .route("/me", get(email_auth::get_authenticated_user_id)) // /api/v1/users/me
+        .route("/profile/{user_id}", get(profile::get_profile)) // /api/v1/users/profile/{user_id}
 }

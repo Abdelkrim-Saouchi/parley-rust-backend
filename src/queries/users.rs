@@ -518,3 +518,22 @@ pub async fn update_user_password(
         })?;
     Ok(())
 }
+
+// get user profile by user_id
+pub async fn get_user_profile_by_id(
+    conn: &mut PgConnection,
+    user_id: Uuid,
+) -> AppResult<Option<crate::models::users::UserProfile>> {
+    let profile = sqlx::query_as::<_, crate::models::users::UserProfile>(
+        "SELECT * FROM user_profiles WHERE user_id = $1",
+    )
+    .bind(user_id)
+    .fetch_optional(conn)
+    .await
+    .map_err(|e| {
+        eprintln!("Database query error (get_user_profile_by_id): {:?}", e);
+        AppError::InternalServerError(anyhow!("Database error fetching user profile"))
+    })?;
+
+    Ok(profile)
+}
