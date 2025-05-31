@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, sqlx::Type)]
@@ -43,13 +43,13 @@ pub struct User {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Serialize, sqlx::FromRow)]
+#[derive(Serialize, Deserialize, sqlx::FromRow)]
 pub struct UserProfile {
-    user_id: Uuid,
-    first_name: String,
-    last_name: String,
-    display_name: Option<String>,
-    avatar_url: Option<String>,
+    pub user_id: Uuid,
+    pub first_name: String,
+    pub last_name: String,
+    pub display_name: Option<String>,
+    pub avatar_url: Option<String>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }

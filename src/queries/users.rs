@@ -1,6 +1,9 @@
 use crate::error::{AppError, AppResult};
 use crate::handlers::v1::email_auth::{Login, Signup};
-use crate::models::users::{AccountStatus, ProviderType, TokenType, User, VerificationToken};
+use crate::handlers::v1::profile::ProfileUpdateData;
+use crate::models::users::{
+    AccountStatus, ProviderType, TokenType, User, UserProfile, VerificationToken,
+};
 use anyhow::anyhow;
 use sqlx::pool::PoolConnection;
 use sqlx::types::time::OffsetDateTime;
@@ -536,4 +539,27 @@ pub async fn get_user_profile_by_id(
     })?;
 
     Ok(profile)
+}
+
+pub async fn update_user_profile_by_id(
+    conn: &mut PgConnection,
+    user_id: Uuid,
+    profile_data: &ProfileUpdateData,
+) -> AppResult<()> {
+    sqlx::query_as::<_, UserProfile>(
+        "UPDATE user_profiles SET first_name = $1, last_name = $2, display_name = $3, avatar_url = $4 WHERE user_id = $5",
+    )
+    .bind(&profile_data.first_name)
+    .bind(&profile_data.last_name)
+    .bind(&profile_data.display_name)
+    .bind(&profile_data.avatar_url)
+    .bind(user_id)
+    .fetch_optional(conn)
+    .await
+    .map_err(|e| {
+        eprintln!("Database update error (update_user_profile): {:?}", e);
+        AppError::InternalServerError(anyhow!("Database error updating user profile"))
+    })?;
+
+    Ok(())
 }

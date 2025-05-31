@@ -34,4 +34,5 @@ pub fn users_routes() -> Router<AppState> {
         // users routes protected by auth
         .route("/me", get(email_auth::get_authenticated_user_id)) // /api/v1/users/me
         .route("/profile/{user_id}", get(profile::get_profile)) // /api/v1/users/profile/{user_id}
+        .route("/profile/update/{user_id}", post(profile::update_profile)) // /api/v1/users/profile/update/{user_id}
 }
