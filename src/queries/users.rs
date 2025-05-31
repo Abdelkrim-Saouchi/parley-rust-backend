@@ -563,3 +563,21 @@ pub async fn update_user_profile_by_id(
 
     Ok(())
 }
+
+pub async fn update_user_location_by_id(
+    conn: &mut PgConnection,
+    user_id: Uuid,
+    country: &str,
+) -> AppResult<()> {
+    sqlx::query("UPDATE user_locations SET country = $1, updated_at = NOW() WHERE user_id = $2")
+        .bind(country)
+        .bind(user_id)
+        .execute(conn)
+        .await
+        .map_err(|e| {
+            eprintln!("Database update error (update_user_location): {:?}", e);
+            AppError::InternalServerError(anyhow!("Database error updating user location"))
+        })?;
+
+    Ok(())
+}

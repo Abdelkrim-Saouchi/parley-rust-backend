@@ -11,7 +11,9 @@ use crate::{
     app_state::AppState,
     error::{AppError, AppResult},
     models::{sessions::UserSession, users::UserProfile},
-    queries::users::{get_user_profile_by_id, update_user_profile_by_id},
+    queries::users::{
+        get_user_profile_by_id, update_user_location_by_id, update_user_profile_by_id,
+    },
 };
 
 pub async fn get_profile(
@@ -81,6 +83,7 @@ pub struct ProfileUpdateData {
     pub last_name: String,
     pub display_name: Option<String>,
     pub avatar_url: Option<String>,
+    pub location: Option<String>,
 }
 
 pub async fn update_profile(
@@ -104,6 +107,10 @@ pub async fn update_profile(
     // Ensure the avatar URL, if provided, is trimmed
     if let Some(avatar_url) = &mut profile_data.avatar_url {
         *avatar_url = avatar_url.trim().to_string();
+    }
+    // Ensure the location, if provided, is trimmed
+    if let Some(location) = &mut profile_data.location {
+        *location = location.trim().to_string();
     }
 
     // Check if the user is authenticated
@@ -131,11 +138,20 @@ pub async fn update_profile(
 
     // Update the profile in the database
     let db_pool = state.db_pool.clone();
-    let mut conn = db_pool.acquire().await.map_err(|e| {
-        AppError::InternalServerError(anyhow!("Failed to acquire database connection: {}", e))
-    })?;
+    let mut tx = db_pool
+        .begin()
+        .await
+        .map_err(|_| AppError::InternalServerError(anyhow!("Failed to begin transaction")))?;
 
-    update_user_profile_by_id(&mut conn, user_id, &profile_data).await?;
+    update_user_profile_by_id(&mut tx, user_id, &profile_data).await?;
+    if let Some(location) = &profile_data.location {
+        // If location is provided, update the user's location
+        update_user_location_by_id(&mut tx, user_id, location).await?;
+    }
+
+    tx.commit()
+        .await
+        .map_err(|_| AppError::InternalServerError(anyhow!("Failed to commit transaction")))?;
 
     Ok((
         axum::http::StatusCode::OK,
