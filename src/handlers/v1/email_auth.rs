@@ -16,6 +16,7 @@ use crate::queries::users::insert_user_provider;
 use crate::queries::users::insert_user_verification_token;
 use crate::queries::users::invalidate_password_reset_tokens;
 use crate::queries::users::mark_verification_token_used;
+use crate::queries::users::update_user_last_login;
 use crate::queries::users::update_user_password;
 use crate::utils::email::send_password_reset_email;
 use crate::utils::email::send_verification_email;
@@ -626,6 +627,9 @@ pub async fn login(
             eprintln!("Session insert error: {:?}", e);
             AppError::InternalServerError(anyhow!("failed to create session"))
         })?;
+
+    // update last_login
+    update_user_last_login(&mut tx, user.id).await?;
 
     // Commit the transaction
     tx.commit().await.map_err(|e| {

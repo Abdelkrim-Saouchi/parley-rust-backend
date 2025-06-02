@@ -5,6 +5,7 @@ use crate::models::users::{ProviderType, User};
 use crate::queries::users::{
     clear_tokens_in_db, create_new_user_with_provider, find_user_by_email,
     find_user_id_by_provider, get_access_token_by_user_id_and_provider, link_provider_to_user,
+    update_user_last_login,
 };
 use anyhow::anyhow;
 use axum::{
@@ -445,6 +446,9 @@ pub async fn oauth_callback_handler(
             eprintln!("Session insert error: {:?}", e);
             AppError::InternalServerError(anyhow!("Failed to store user session after Oauth"))
         })?;
+
+    // update last login time
+    update_user_last_login(&mut tx, user_id).await?;
 
     tx.commit().await.map_err(|e| {
         eprintln!("Transaction commit error: {:?}", e);

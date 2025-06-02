@@ -581,3 +581,16 @@ pub async fn update_user_location_by_id(
 
     Ok(())
 }
+
+pub async fn update_user_last_login(conn: &mut PgConnection, user_id: Uuid) -> AppResult<()> {
+    sqlx::query("UPDATE users SET last_login_at = NOW() WHERE id = $1")
+        .bind(user_id)
+        .execute(conn)
+        .await
+        .map_err(|e| {
+            eprintln!("Database update error (update_user_last_login): {:?}", e);
+            AppError::InternalServerError(anyhow!("Database error updating last login time"))
+        })?;
+
+    Ok(())
+}
