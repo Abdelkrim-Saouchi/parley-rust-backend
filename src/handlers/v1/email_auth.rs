@@ -9,6 +9,7 @@ use crate::queries::users::find_password_reset_token;
 use crate::queries::users::find_user_by_email;
 use crate::queries::users::find_verification_token;
 use crate::queries::users::get_user_by_email;
+use crate::queries::users::insert_or_update_user_presence_to_online;
 use crate::queries::users::insert_user;
 use crate::queries::users::insert_user_location;
 use crate::queries::users::insert_user_profile;
@@ -18,6 +19,7 @@ use crate::queries::users::invalidate_password_reset_tokens;
 use crate::queries::users::mark_verification_token_used;
 use crate::queries::users::update_user_last_login;
 use crate::queries::users::update_user_password;
+use crate::queries::users::update_user_presence_to_offline;
 use crate::utils::email::send_password_reset_email;
 use crate::utils::email::send_verification_email;
 use anyhow::anyhow;
@@ -631,6 +633,9 @@ pub async fn login(
     // update last_login
     update_user_last_login(&mut tx, user.id).await?;
 
+    //chack user in user_presence before insert or update record in user_presence table
+    insert_or_update_user_presence_to_online(&mut tx, user.id).await?;
+
     // Commit the transaction
     tx.commit().await.map_err(|e| {
         eprintln!("Transaction commit error: {:?}", e);
@@ -643,8 +648,31 @@ pub async fn login(
     ))
 }
 
-pub async fn logout(session: Session) -> AppResult<impl IntoResponse> {
+pub async fn logout(
+    session: Session,
+    State(state): State<AppState>,
+) -> AppResult<impl IntoResponse> {
+    let db_pool = state.db_pool;
+    let mut conn = db_pool.acquire().await.map_err(|e| {
+        eprintln!("Database connection error: {:?}", e);
+        AppError::InternalServerError(anyhow!("Failed to get database connection"))
+    })?;
+    let user_id = session
+        .get::<UserSession>("user")
+        .await
+        .map_err(|e| {
+            eprintln!("Session get error: {:?}", e);
+            AppError::InternalServerError(anyhow!("failed to get session"))
+        })?
+        .map(|s| s.user_id);
     session.clear().await;
+    if user_id.is_none() {
+        return Err(AppError::Unauthorized(anyhow!("Unauthorized")));
+    }
+    let user_id = user_id.unwrap();
+    // update user presence to offline
+    update_user_presence_to_offline(&mut conn, user_id).await?;
+
     Ok(StatusCode::OK)
 }
 

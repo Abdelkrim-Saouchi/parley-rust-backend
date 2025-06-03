@@ -2,6 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+// Authentication and User Management Models
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, sqlx::Type)]
 #[sqlx(type_name = "provider_type", rename_all = "lowercase")]
 pub enum ProviderType {
@@ -87,4 +88,71 @@ pub struct VerificationToken {
     pub expires_at: DateTime<Utc>,
     pub created_at: DateTime<Utc>,
     pub used_at: Option<DateTime<Utc>>,
+}
+
+// Chat and Messaging Models
+#[derive(Serialize, sqlx::Type)]
+#[sqlx(type_name = "friendship_status", rename_all = "lowercase")]
+pub enum FriendshipStatus {
+    Pending,
+    Accepted,
+    Declined,
+    Blocked,
+}
+
+#[derive(Serialize, sqlx::Type)]
+#[sqlx(type_name = "chat_type", rename_all = "lowercase")]
+pub enum ChatType {
+    Direct,
+    Group,
+}
+
+#[derive(Serialize, sqlx::Type)]
+#[sqlx(type_name = "group_visibility", rename_all = "lowercase")]
+pub enum GroupVisibility {
+    Public,
+    Private,
+}
+
+#[derive(Serialize, sqlx::Type)]
+#[sqlx(type_name = "member_role", rename_all = "lowercase")]
+pub enum MemberRole {
+    Admin,
+    Member,
+}
+
+#[derive(Serialize, sqlx::Type)]
+#[sqlx(type_name = "invitation_status", rename_all = "lowercase")]
+pub enum InvitationStatus {
+    Pending,
+    Accepted,
+    Declined,
+    Expired,
+}
+
+#[derive(Serialize, sqlx::Type)]
+#[sqlx(type_name = "message_type", rename_all = "lowercase")]
+pub enum MessageType {
+    Text,
+    Image,
+    File,
+    System,
+}
+
+#[derive(Serialize, sqlx::Type)]
+#[sqlx(type_name = "user_status", rename_all = "lowercase")]
+pub enum UserStatus {
+    Online,
+    Busy,
+    Offline,
+    Away,
+}
+
+#[derive(Serialize, sqlx::FromRow)]
+pub struct UserPresence {
+    pub user_id: Uuid,
+    pub status: UserStatus,
+    pub custom_message: Option<String>,
+    pub last_seen_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }

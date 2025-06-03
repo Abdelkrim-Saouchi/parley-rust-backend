@@ -2,7 +2,7 @@ use crate::error::{AppError, AppResult};
 use crate::handlers::v1::email_auth::{Login, Signup};
 use crate::handlers::v1::profile::ProfileUpdateData;
 use crate::models::users::{
-    AccountStatus, ProviderType, TokenType, User, UserProfile, VerificationToken,
+    AccountStatus, ProviderType, TokenType, User, UserProfile, UserStatus, VerificationToken,
 };
 use anyhow::anyhow;
 use sqlx::pool::PoolConnection;
@@ -10,6 +10,7 @@ use sqlx::types::time::OffsetDateTime;
 use sqlx::{PgConnection, Postgres};
 use uuid::Uuid;
 
+// Authentication and user management functions
 pub async fn insert_user(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     payload: &Signup,
@@ -591,6 +592,59 @@ pub async fn update_user_last_login(conn: &mut PgConnection, user_id: Uuid) -> A
             eprintln!("Database update error (update_user_last_login): {:?}", e);
             AppError::InternalServerError(anyhow!("Database error updating last login time"))
         })?;
+
+    Ok(())
+}
+
+// Chat and Messaging query funtions
+pub async fn insert_or_update_user_presence_to_online(
+    conn: &mut PgConnection,
+    user_id: Uuid,
+) -> AppResult<()> {
+    let user_status = UserStatus::Online;
+
+    sqlx::query(
+        r#"
+        INSERT INTO user_presence (user_id, status, last_seen_at)
+        VALUES ($1,$2, NOW())
+        ON CONFLICT (user_id) DO UPDATE SET
+            status = $2,
+            last_seen_at = NOW()
+        "#,
+    )
+    .bind(user_id)
+    .bind(user_status as UserStatus)
+    .execute(conn)
+    .await
+    .map_err(|e| {
+        eprintln!("Database error (insert_or_update_user_presence): {:?}", e);
+        AppError::InternalServerError(anyhow!("Failed to insert or update user presence"))
+    })?;
+
+    Ok(())
+}
+
+pub async fn update_user_presence_to_offline(
+    conn: &mut PgConnection,
+    user_id: Uuid,
+) -> AppResult<()> {
+    let user_status = UserStatus::Offline;
+
+    sqlx::query(
+        r#"
+        UPDATE user_presence
+        SET status = $1, last_seen_at = NOW()
+        WHERE user_id = $2
+        "#,
+    )
+    .bind(user_status as UserStatus)
+    .bind(user_id)
+    .execute(conn)
+    .await
+    .map_err(|e| {
+        eprintln!("Database error (update_user_presence_to_offline): {:?}", e);
+        AppError::InternalServerError(anyhow!("Failed to update user presence to offline"))
+    })?;
 
     Ok(())
 }
