@@ -624,6 +624,34 @@ pub async fn insert_or_update_user_presence_to_online(
     Ok(())
 }
 
+pub async fn update_user_presence_with_message(
+    conn: &mut PgConnection,
+    user_id: Uuid,
+    user_status: UserStatus,
+    message: &str,
+) -> AppResult<()> {
+    sqlx::query(
+        r#"
+        UPDATE user_presence SET
+            status = $1,
+            last_seen_at = NOW(),
+            custom_message = $2
+            WHERE user_id = $3
+        "#,
+    )
+    .bind(user_status as UserStatus)
+    .bind(message)
+    .bind(user_id)
+    .execute(conn)
+    .await
+    .map_err(|e| {
+        eprintln!("Database error (insert_or_update_user_presence): {:?}", e);
+        AppError::InternalServerError(anyhow!("Failed to insert or update user presence"))
+    })?;
+
+    Ok(())
+}
+
 pub async fn update_user_presence_to_offline(
     conn: &mut PgConnection,
     user_id: Uuid,
