@@ -4,8 +4,9 @@ use crate::models::sessions::UserSession;
 use crate::models::users::{ProviderType, User};
 use crate::queries::users::{
     clear_tokens_in_db, create_new_user_with_provider, find_user_by_email,
-    find_user_id_by_provider, get_access_token_by_user_id_and_provider, link_provider_to_user,
-    update_user_last_login,
+    find_user_id_by_provider, get_access_token_by_user_id_and_provider,
+    insert_or_update_user_presence_to_online, link_provider_to_user, update_user_last_login,
+    update_user_presence_to_offline,
 };
 use anyhow::anyhow;
 use axum::{
@@ -450,6 +451,9 @@ pub async fn oauth_callback_handler(
     // update last login time
     update_user_last_login(&mut tx, user_id).await?;
 
+    // insert or update user presence to online
+    insert_or_update_user_presence_to_online(&mut tx, user_id).await?;
+
     tx.commit().await.map_err(|e| {
         eprintln!("Transaction commit error: {:?}", e);
         AppError::InternalServerError(anyhow!("Failed to commit transaction during Oauth"))
@@ -490,14 +494,14 @@ pub async fn oauth_logout_handler(
         ));
     };
 
+    // Obtain a connection from the pool
+    let mut conn = pool_db.acquire().await.map_err(|e| {
+        eprintln!("Database connection error: {:?}", e);
+        AppError::InternalServerError(anyhow!("Failed to get database connection"))
+    })?;
+
     match provider_name.to_lowercase().as_str() {
         "google" => {
-            // Obtain a connection from the pool
-            let mut conn = pool_db.acquire().await.map_err(|e| {
-                eprintln!("Database connection error: {:?}", e);
-                AppError::InternalServerError(anyhow!("Failed to get database connection"))
-            })?;
-
             let provider_type = ProviderType::Google;
             let row =
                 get_access_token_by_user_id_and_provider(user_id, provider_type, &mut conn).await?;
@@ -518,12 +522,6 @@ pub async fn oauth_logout_handler(
             }
         }
         "github" => {
-            // Obtain a connection from the pool
-            let mut conn = pool_db.acquire().await.map_err(|e| {
-                eprintln!("Database connection error: {:?}", e);
-                AppError::InternalServerError(anyhow!("Failed to get database connection"))
-            })?;
-
             let provider_type = ProviderType::Github;
             let row =
                 get_access_token_by_user_id_and_provider(user_id, provider_type, &mut conn).await?;
@@ -548,11 +546,6 @@ pub async fn oauth_logout_handler(
         }
         "facebook" => {
             // obtain access token
-            let mut conn = pool_db.acquire().await.map_err(|e| {
-                eprintln!("Database connection error: {:?}", e);
-                AppError::InternalServerError(anyhow!("Failed to get database connection"))
-            })?;
-
             let provider_type = ProviderType::Facebook;
             let row =
                 get_access_token_by_user_id_and_provider(user_id, provider_type, &mut conn).await?;
@@ -581,6 +574,9 @@ pub async fn oauth_logout_handler(
             )));
         }
     }
+
+    // update user presence to offline
+    update_user_presence_to_offline(&mut conn, user_id).await?;
 
     Ok((
         axum::http::StatusCode::OK,
