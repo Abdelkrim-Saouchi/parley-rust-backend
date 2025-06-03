@@ -11,6 +11,7 @@ mod app_state;
 mod db;
 mod error;
 mod handlers;
+mod middlewares;
 mod models;
 mod queries;
 mod routes;

@@ -676,16 +676,21 @@ pub async fn logout(
     Ok(StatusCode::OK)
 }
 
-pub async fn get_authenticated_user_id(session: Session) -> AppResult<impl IntoResponse> {
-    let user_session = session.get::<UserSession>("user").await.map_err(|e| {
-        eprintln!("Session get error: {:?}", e);
-        AppError::InternalServerError(anyhow!("failed to get session"))
-    })?;
-    match user_session {
-        Some(user_data) => Ok((
-            StatusCode::OK,
-            Json(serde_json::json!({"id": user_data.user_id})),
-        )),
-        None => Err(AppError::Unauthorized(anyhow!("Unauthorized"))),
-    }
+pub async fn get_authenticated_user_id() -> AppResult<impl IntoResponse> {
+    /* // let user_session = session.get::<UserSession>("user").await.map_err(|e| {
+    //     eprintln!("Session get error: {:?}", e);
+    //     AppError::InternalServerError(anyhow!("failed to get session"))
+    // })?;
+    // match user_session {
+    //     Some(user_data) => Ok((
+    //         StatusCode::OK,
+    //         Json(serde_json::json!({"id": user_data.user_id})),
+    //     )),
+    //     None => Err(AppError::Unauthorized(anyhow!("Unauthorized"))),
+    // } */
+
+    Ok((
+        StatusCode::OK,
+        Json(serde_json::json!({"message": "access protected route"})),
+    ))
 }
