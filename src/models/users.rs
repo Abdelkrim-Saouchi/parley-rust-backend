@@ -91,7 +91,7 @@ pub struct VerificationToken {
 }
 
 // Chat and Messaging Models
-#[derive(Serialize, sqlx::Type)]
+#[derive(Serialize, sqlx::Type, PartialEq, Eq)]
 #[sqlx(type_name = "friendship_status", rename_all = "lowercase")]
 pub enum FriendshipStatus {
     Pending,
