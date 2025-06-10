@@ -1,3 +1,4 @@
+pub mod chats;
 pub mod email_auth;
 pub mod friends;
 pub mod get_all_users;

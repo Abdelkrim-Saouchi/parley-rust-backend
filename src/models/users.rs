@@ -100,14 +100,14 @@ pub enum FriendshipStatus {
     Blocked,
 }
 
-#[derive(Serialize, sqlx::Type)]
+#[derive(Serialize, Deserialize, sqlx::Type, Debug)]
 #[sqlx(type_name = "chat_type", rename_all = "lowercase")]
 pub enum ChatType {
     Direct,
     Group,
 }
 
-#[derive(Serialize, sqlx::Type)]
+#[derive(Serialize, Deserialize, sqlx::Type)]
 #[sqlx(type_name = "group_visibility", rename_all = "lowercase")]
 pub enum GroupVisibility {
     Public,
@@ -118,6 +118,7 @@ pub enum GroupVisibility {
 #[sqlx(type_name = "member_role", rename_all = "lowercase")]
 pub enum MemberRole {
     Admin,
+    Moderator,
     Member,
 }
 
