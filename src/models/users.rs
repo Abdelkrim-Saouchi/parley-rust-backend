@@ -122,7 +122,7 @@ pub enum MemberRole {
     Member,
 }
 
-#[derive(Serialize, sqlx::Type)]
+#[derive(Serialize, Deserialize, sqlx::Type)]
 #[sqlx(type_name = "invitation_status", rename_all = "lowercase")]
 pub enum InvitationStatus {
     Pending,
