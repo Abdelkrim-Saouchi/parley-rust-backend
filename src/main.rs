@@ -1,12 +1,10 @@
-use std::env;
-
 use axum_helmet::{Helmet, HelmetLayer, ReferrerPolicy};
 use oauth2::basic::BasicClient;
 use oauth2::{AuthUrl, ClientId, ClientSecret, RedirectUrl, TokenUrl};
+use std::env;
 use tower_sessions::session_store::ExpiredDeletion;
 use tower_sessions::{cookie::time::Duration, SessionManagerLayer};
 use tower_sessions_sqlx_store::PostgresStore;
-
 mod app_state;
 mod db;
 mod error;
@@ -16,6 +14,7 @@ mod models;
 mod queries;
 mod routes;
 mod utils;
+mod websocket;
 
 #[tokio::main]
 async fn main() {
@@ -122,6 +121,7 @@ async fn main() {
         google_oauth_client,
         github_oauth_client,
         facebook_oauth_client,
+        websocket_manager: websocket::manager::WebSocketManager::new(),
     };
     let app = routes::create_routes()
         .with_state(state)

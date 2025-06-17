@@ -131,7 +131,7 @@ pub enum InvitationStatus {
     Expired,
 }
 
-#[derive(Serialize, sqlx::Type)]
+#[derive(Serialize, Clone, Debug, Deserialize, sqlx::Type)]
 #[sqlx(type_name = "message_type", rename_all = "lowercase")]
 pub enum MessageType {
     Text,

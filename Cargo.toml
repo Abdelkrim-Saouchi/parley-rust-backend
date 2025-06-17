@@ -7,8 +7,8 @@ edition = "2021"
 dotenvy = "0.15.7"
 
 [dependencies]
-axum = "0.8.4"
-tokio = { version = "1", features = ["full"] }
+axum = { version = "0.8.4", features = ["ws"] }
+tokio = { version = "1", features = ["full", "sync"] }
 sqlx = { version = "0.8", features = [
     "runtime-tokio-rustls",
     "postgres",
@@ -37,3 +37,6 @@ lettre = { version = "0.11", default-features = false, features = [
     "smtp-transport",
     "builder",
 ] }
+futures-util = "0.3"
+tokio-stream = "0.1"
+dashmap = "6.0"
